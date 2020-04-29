@@ -12,6 +12,7 @@ class TourminatorBot(commands.Bot):
 
         from tourminator import cogs
         self.add_cog(cogs.UserManagementCog(self))
+        self.add_cog(cogs.EventManagementCog(self))
 
     async def on_ready(self):
         print('Online as {0.user}'.format(self))

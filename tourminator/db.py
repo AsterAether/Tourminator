@@ -1,3 +1,5 @@
+from typing import Tuple
+
 from sqlalchemy.exc import SQLAlchemyError
 
 from tourminator import models
@@ -5,7 +7,7 @@ from tourminator import models
 from sqlalchemy import create_engine, and_
 from sqlalchemy.orm import sessionmaker, Session
 
-from tourminator.models import Guild, User, Event, Participation
+from tourminator.models import Event, Participation
 
 
 class DatabaseService:
@@ -22,43 +24,9 @@ class DatabaseService:
     def __create_session(self) -> Session:
         return self.SessionMaker()
 
-    def register_guild(self, guild_id):
+    def create_event(self, name: str, description: str, guild_id: int):
         session = self.__create_session()
-        guild = Guild(id=guild_id)
-        session.add(guild)
-        try:
-            session.commit()
-            return True
-        except SQLAlchemyError as e:
-            session.rollback()
-            return False
-        finally:
-            session.close()
-
-    def register_user(self, user_id, guild_id):
-        session = self.__create_session()
-        user = User(id=user_id, guild_id=guild_id)
-        session.add(user)
-        try:
-            session.commit()
-            return True
-        except SQLAlchemyError as e:
-            session.rollback()
-            return False
-        finally:
-            session.close()
-
-    def is_registered(self, user_id, guild_id):
-        session = self.__create_session()
-        count = session.query(User).filter(
-            and_(User.guild_id == guild_id, User.id == user_id)
-        ).count()
-        session.close()
-        return count == 1
-
-    def create_event(self, name: str, guild_id: int):
-        session = self.__create_session()
-        event = Event(guild_id=guild_id, name=name)
+        event = Event(guild_id=guild_id, description=description, name=name)
         session.add(event)
         try:
             session.commit()
@@ -70,32 +38,50 @@ class DatabaseService:
         finally:
             session.close()
 
+    def delete_event(self, event_id: int):
+        session = self.__create_session()
+        session.query(Participation).filter_by(event_id=event_id).delete()
+        session.flush()
+        session.query(Event).filter_by(id=event_id).delete()
+        session.commit()
+        session.close()
+
     def get_all_events(self, guild_id: int):
         session = self.__create_session()
         events = session.query(Event).filter(Event.guild_id == guild_id).all()
         session.close()
         return events
 
-    def get_event_by_name(self, name: str, guild_id: int):
+    def get_event_by(self, name: Tuple[str, int] = None, message_id: Tuple[int, int] = None,
+                     event_channel_id: int = None):
         session = self.__create_session()
+        if name is not None:
+            criteria = and_(Event.guild_id == name[1], Event.name == name[0])
+        elif message_id is not None:
+            criteria = and_(Event.message_id == message_id[0], Event.message_channel_id == message_id[1])
+        else:
+            criteria = Event.event_channel_id == event_channel_id
+
         event = session.query(Event).filter(
-            and_(Event.guild_id == guild_id, Event.name == name)
+            criteria
         ).first()
         session.close()
         return event
 
-    def update_event(self, event_id: int, message_id: int):
+    def update_event(self, event_id: int, message_id: int = None, message_channel_id: int = None,
+                     event_channel_id: int = None, event_role_id: int = None):
         session = self.__create_session()
         event = session.query(Event).filter_by(id=event_id).first()
-        event.message_id = message_id
+        if message_id is not None:
+            event.message_id = message_id
+        if message_channel_id is not None:
+            event.message_channel_id = message_channel_id
+        if event_channel_id is not None:
+            event.event_channel_id = event_channel_id
+        if event_role_id is not None:
+            event.event_role_id = event_role_id
         session.commit()
         session.close()
-
-    def get_event_by_message_id(self, message_id):
-        session = self.__create_session()
-        event = session.query(Event).filter(Event.message_id == message_id).first()
-        session.close()
-        return event
 
     def join_event(self, event_id, user_id):
         session = self.__create_session()

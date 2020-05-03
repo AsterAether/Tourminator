@@ -11,7 +11,6 @@ class TourminatorBot(commands.Bot):
         self.db = DatabaseService(db_file)
 
         from tourminator import cogs
-        self.add_cog(cogs.UserManagementCog(self))
         self.add_cog(cogs.EventManagementCog(self))
 
     async def on_ready(self):

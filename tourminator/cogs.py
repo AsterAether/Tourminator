@@ -1,52 +1,16 @@
+from typing import Optional
+
 import discord
-from discord import Member, TextChannel, Reaction, RawReactionActionEvent
+from discord import Member, TextChannel, RawReactionActionEvent, Guild, Colour
 from discord.ext import commands
-from discord.ext.commands import Context, CommandError
+from discord.ext.commands import Context
 
 from tourminator.bot import TourminatorBot
-
-
-class NotRegisteredError(CommandError):
-    def __init__(self, ctx: Context):
-        super().__init__('{0.name}, you are not registered!\n'
-                         'Please use `{1}register` to register on this bot.'.format(ctx.author,
-                                                                                    ctx.cog.bot.command_prefix))
-
-
-async def is_registered(ctx: Context):
-    if not ctx.cog.bot.db.is_registered(ctx.author.id, ctx.author.guild.id):
-        raise NotRegisteredError(ctx)
-    return True
-
-
-class UserManagementCog(commands.Cog, name='User Management'):
-    def __init__(self, bot: TourminatorBot):
-        self.bot = bot
-
-    def cog_check(self, ctx):
-        return hasattr(ctx.author, 'guild')
-
-    @commands.command()
-    async def register(self, ctx: Context):
-        """Register to the bot on this server, to be able to participate in events"""
-        member: Member = ctx.author
-
-        self.bot.db.register_guild(member.guild.id)
-        message = '{0.name}, you are registered now!'.format(member) \
-            if self.bot.db.register_user(member.id, member.guild.id) \
-            else '{0.name}, you are already registered.'.format(member)
-
-        await ctx.send(message)
-
-    @commands.Cog.listener()
-    async def on_command_error(self, ctx, error):
-        if isinstance(error, NotRegisteredError):
-            await ctx.send(str(error))
+from tourminator.models import Event
 
 
 class EventManagementCog(commands.Cog, name='Event Management'):
     __join_emoji = '\u2705'
-    __leave_emoji = '\u274C'
 
     def __init__(self, bot: TourminatorBot):
         self.bot = bot
@@ -54,70 +18,170 @@ class EventManagementCog(commands.Cog, name='Event Management'):
     def cog_check(self, ctx):
         return hasattr(ctx.author, 'guild')
 
+    async def get_event_embed(self, event, add_postamble=True):
+        embed = discord.Embed(title='**{0.name}**'.format(event), color=Colour.light_grey(),
+                              description=event.description)
+        participators = self.bot.db.get_participators_of_event(event.id)
+        if len(participators) > 0:
+            text = ''
+            for participator in participators:
+                user = await self.bot.fetch_user(participator)
+                text += '{}\n'.format(user.mention)
+            embed.add_field(name='Participators', value=text, inline=False)
+        if add_postamble:
+            embed.add_field(name='Join', value='Press {0} to join / leave this event!'.format(self.__join_emoji),
+                            inline=False)
+        return embed
+
     async def post_event_message(self, event, channel):
-        message = await channel.send('Event {0.name}'.format(event))
-        self.bot.db.update_event(event.id, message.id)
+        message = await channel.send(embed=await self.get_event_embed(event))
+        if event.message_id is not None:
+            old_channel = await self.bot.fetch_channel(event.message_channel_id)
+            old_message = await old_channel.fetch_message(event.message_id)
+            await old_message.delete()
+        self.bot.db.update_event(event.id, message_id=message.id, message_channel_id=channel.id)
 
         await message.add_reaction(self.__join_emoji)
-        await message.add_reaction(self.__leave_emoji)
 
-    @commands.group()
-    @commands.check(is_registered)
-    async def event(self, ctx):
-        if ctx.invoked_subcommand is None:
-            await ctx.send('Invalid event command!')
+    async def update_event_message(self, event):
+        channel = await self.bot.fetch_channel(event.message_channel_id)
+        message = await channel.fetch_message(event.message_id)
+        await message.edit(embed=await self.get_event_embed(event))
+
+    async def join_event(self, event: Event, user_id: int):
+        if self.bot.db.join_event(event.id, user_id):
+            guild: Guild = await self.bot.fetch_guild(event.guild_id)
+            role = guild.get_role(event.event_role_id)
+            user = await guild.fetch_member(user_id)
+            await user.add_roles(role)
+            return True
+        return False
+
+    async def leave_event(self, event: Event, user_id: int):
+        if self.bot.db.leave_event(event.id, user_id):
+            guild: Guild = await self.bot.fetch_guild(event.guild_id)
+            role = guild.get_role(event.event_role_id)
+            user = await guild.fetch_member(user_id)
+            await user.remove_roles(role)
+            return True
+        return False
 
     @commands.Cog.listener()
     async def on_raw_reaction_add(self, payload: RawReactionActionEvent):
-        channel = await self.bot.fetch_channel(payload.channel_id)
-        user = await self.bot.fetch_user(payload.user_id)
-        event = self.bot.db.get_event_by_message_id(payload.message_id)
+        event = self.bot.db.get_event_by(message_id=(payload.message_id, payload.channel_id))
+        if event is not None and payload.user_id != self.bot.user.id and payload.emoji.name == self.__join_emoji \
+                and await self.join_event(event, payload.user_id):
+            await self.update_event_message(event)
 
-        if event is not None and self.bot.db.is_registered(payload.user_id, payload.guild_id):
-            if payload.emoji.name == self.__join_emoji:
-                if self.bot.db.join_event(event.id, payload.user_id):
-                    await channel.send('{0.name} joined event {1.name}!'.format(user, event))
-            elif payload.emoji.name == self.__leave_emoji:
-                if self.bot.db.leave_event(event.id, user.id):
-                    await channel.send('{0.name} left event {1.name}!'.format(user, event))
+    @commands.Cog.listener()
+    async def on_raw_reaction_remove(self, payload: RawReactionActionEvent):
+        event = self.bot.db.get_event_by(message_id=(payload.message_id, payload.channel_id))
+        if event is not None and payload.user_id != self.bot.user.id and payload.emoji.name == self.__join_emoji \
+                and await self.leave_event(event, payload.user_id):
+            await self.update_event_message(event)
+
+    @commands.group()
+    async def event(self, ctx):
+        """Commands for managing events."""
+        if ctx.invoked_subcommand is None:
+            await ctx.send('Invalid event command!')
 
     @event.command()
-    async def create(self, ctx: Context, name: str):
-        """Create a new event."""
+    @commands.has_role('Admin')
+    async def create(self, ctx: Context, name: str, *, description: str = ''):
+        """
+        Create a new event.
+        The description can be multiple lines.
+        """
         name = name.strip()
-        event = self.bot.db.create_event(name, ctx.guild.id)
-        message = 'Event created!' \
-            if event \
-            else 'Event with the same name already exists on this server!'
-        await ctx.send(message)
-        if event:
+        guild: Guild = ctx.guild
+        event = self.bot.db.create_event(name, description, guild.id)
+        if not event:
+            await ctx.send('Event with the same name already exists on this server!')
+        else:
+            role = await guild.create_role(name=name)
+            overwrites = {
+                guild.default_role: discord.PermissionOverwrite(read_messages=False),
+                role: discord.PermissionOverwrite(read_messages=True),
+                guild.me: discord.PermissionOverwrite(read_messages=True)
+            }
+
+            event_channel = await guild.create_text_channel(name=name, overwrites=overwrites)
+            self.bot.db.update_event(event.id, event_channel_id=event_channel.id, event_role_id=role.id)
             await self.post_event_message(event, ctx.channel)
 
     @event.command()
-    async def list(self, ctx):
-        """List all events."""
-        message = "Events:\n"
-        events = self.bot.db.get_all_events()
-        for event in events:
-            message += '\t' + event.name + '\n'
-        await ctx.send(message)
+    @commands.has_role('Admin')
+    async def delete(self, ctx: Context, name: str, delete_channel: Optional[bool] = True):
+        """
+        Delete an existing event.
+        The second parameter denotes if the event channel should be deleted or not. Defaults to true.
+        """
+        name = name.strip()
+        guild: Guild = ctx.guild
+        event = self.bot.db.get_event_by(name=(name, guild.id))
+        if not event:
+            await ctx.send('Event not found!')
+        else:
+            role = guild.get_role(event.event_role_id)
+            event_channel: TextChannel = guild.get_channel(event.event_channel_id)
+            if delete_channel:
+                await event_channel.delete()
+            else:
+                await event_channel.set_permissions(guild.default_role, overwrite=None)
+                await event_channel.set_permissions(guild.me, overwrite=None)
+            await role.delete()
+
+            message_channel = await self.bot.fetch_channel(event.message_channel_id)
+            message = await message_channel.fetch_message(event.message_id)
+            await message.delete()
+
+            self.bot.db.delete_event(event.id)
+            await ctx.send('Event deleted!')
 
     @event.command()
+    @commands.has_role('Admin')
     async def message(self, ctx: Context, name: str, channel: TextChannel = None):
+        """
+        Send the event status message to a channel.
+        If the second parameter is given, the message will be sent to that channel instead.
+        """
         channel = channel or ctx.channel
 
-        event = self.bot.db.get_event_by_name(name, ctx.guild.id)
+        event = self.bot.db.get_event_by(name=(name, ctx.guild.id))
         if not event:
             await ctx.send('Event not found!')
             return
         await self.post_event_message(event, channel)
 
     @event.command()
+    async def leave(self, ctx: Context):
+        """Leave the event, if you are in a event channel."""
+        event = self.bot.db.get_event_by(event_channel_id=ctx.channel.id)
+        if not event:
+            await ctx.send("This is not an event channel!")
+        else:
+            channel = await self.bot.fetch_channel(event.message_channel_id)
+            message = await channel.fetch_message(event.message_id)
+            await message.remove_reaction(self.__join_emoji, ctx.author)
+            await ctx.message.delete()
+
+    @event.command()
+    async def list(self, ctx: Context):
+        """List all events."""
+
+        events = self.bot.db.get_all_events(ctx.guild.id)
+        if len(events) > 0:
+            text = ''
+            for event in events:
+                text += event.name + '\n'
+            embed = discord.Embed(title='**Events**', description=text)
+            await ctx.send(embed=embed)
+        else:
+            await ctx.send('No events currently!')
+
+    @event.command()
     async def users(self, ctx: Context, name: str):
-        event = self.bot.db.get_event_by_name(name, ctx.guild.id)
-        participators = self.bot.db.get_participators_of_event(event.id)
-        message = '{0.name}:\n'.format(event)
-        for participator in participators:
-            user = await self.bot.fetch_user(participator)
-            message += '\t{0.name}\n'.format(user)
-        await ctx.send(message)
+        """List all users participating in this event."""
+        event = self.bot.db.get_event_by(name=(name, ctx.guild.id))
+        await ctx.send(embed=await self.get_event_embed(event, add_postamble=False))

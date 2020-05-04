@@ -165,6 +165,7 @@ class EventManagementCog(commands.Cog, name='Event Management'):
             message = await channel.fetch_message(event.message_id)
             await message.remove_reaction(self.__join_emoji, ctx.author)
             await ctx.message.delete()
+            await self.leave_event(event, ctx.author.id)
 
     @event.command()
     async def list(self, ctx: Context):

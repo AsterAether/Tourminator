@@ -105,7 +105,7 @@ class DatabaseService:
         session.close()
         return amount == 1
 
-    def get_participators_of_event(self, event_id):
+    def get_participants_of_event(self, event_id):
         session = self.__create_session()
         event = session.query(Event).filter(Event.id == event_id).first()
         participants = event.participations

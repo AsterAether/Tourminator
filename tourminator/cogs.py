@@ -21,13 +21,13 @@ class EventManagementCog(commands.Cog, name='Event Management'):
     async def get_event_embed(self, event, add_postamble=True):
         embed = discord.Embed(title='**{0.name}**'.format(event), color=Colour.light_grey(),
                               description=event.description)
-        participators = self.bot.db.get_participators_of_event(event.id)
-        if len(participators) > 0:
+        participants = self.bot.db.get_participants_of_event(event.id)
+        if len(participants) > 0:
             text = ''
-            for participator in participators:
-                user = await self.bot.fetch_user(participator)
+            for participant in participants:
+                user = await self.bot.fetch_user(participant)
                 text += '{}\n'.format(user.mention)
-            embed.add_field(name='Participators', value=text, inline=False)
+            embed.add_field(name='Participants', value=text, inline=False)
         if add_postamble:
             embed.add_field(name='Join', value='Press {0} to join / leave this event!'.format(self.__join_emoji),
                             inline=False)
@@ -180,8 +180,8 @@ class EventManagementCog(commands.Cog, name='Event Management'):
         else:
             await ctx.send('No events currently!')
 
-    @event.command()
-    async def users(self, ctx: Context, name: str):
+    @event.command(aliases=['users'])
+    async def participators(self, ctx: Context, name: str):
         """List all users participating in this event."""
         event = self.bot.db.get_event_by(name=(name, ctx.guild.id))
         await ctx.send(embed=await self.get_event_embed(event, add_postamble=False))

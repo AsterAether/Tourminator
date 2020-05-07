@@ -69,7 +69,7 @@ class DatabaseService:
         return event
 
     def update_event(self, event_id: int, message_id: int = None, message_channel_id: int = None,
-                     event_channel_id: int = None, event_role_id: int = None):
+                     event_channel_id: int = None, event_role_id: int = None, description: str = None):
         session = self.__create_session()
         event = session.query(Event).filter_by(id=event_id).first()
         if message_id is not None:
@@ -80,6 +80,8 @@ class DatabaseService:
             event.event_channel_id = event_channel_id
         if event_role_id is not None:
             event.event_role_id = event_role_id
+        if description is not None:
+            event.description = description
         session.commit()
         session.close()
 

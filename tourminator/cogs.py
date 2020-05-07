@@ -140,7 +140,7 @@ class EventManagementCog(commands.Cog, name='Event Management'):
             await ctx.send('Event deleted!')
 
     @event.command()
-    @commands.has_role('admin')
+    @commands.has_role('Admin')
     async def edit(self, ctx: Context, name: str, *, description: str = ''):
         """Edit the description of an existing event."""
         name = name.strip()

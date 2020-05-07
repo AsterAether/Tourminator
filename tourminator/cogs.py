@@ -140,6 +140,20 @@ class EventManagementCog(commands.Cog, name='Event Management'):
             await ctx.send('Event deleted!')
 
     @event.command()
+    @commands.has_role('admin')
+    async def edit(self, ctx: Context, name: str, *, description: str = ''):
+        """Edit the description of an existing event."""
+        name = name.strip()
+        guild: Guild = ctx.guild
+        event = self.bot.db.get_event_by(name=(name, guild.id))
+        if not event:
+            await ctx.send('Event not found!')
+        else:
+            self.bot.db.update_event(event.id, description=description)
+            event.description = description
+            await self.update_event_message(event)
+
+    @event.command()
     @commands.has_role('Admin')
     async def message(self, ctx: Context, name: str, channel: TextChannel = None):
         """
